@@ -8,6 +8,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY bot ./bot
+COPY scripts ./scripts
 
 # SQLite lives here; mount a volume so monitors survive restarts.
 ENV DB_PATH=/data/monitors.db

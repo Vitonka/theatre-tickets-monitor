@@ -8,8 +8,8 @@ Supported theatres out of the box:
 
 | Theatre | Data source | Reliable signal |
 | --- | --- | --- |
-| **Almeida** (`almeida.co.uk`) | Rendered calendar page | Per-date sold-out / price |
-| **Royal Court** (`royalcourttheatre.com`) | Spektrix public JSON API | Per-date list + on-sale state |
+| **Almeida** (`almeida.co.uk`) | Calendar admin-ajax endpoint | Per-date sold-out (CSS state) |
+| **Royal Court** (`royalcourttheatre.com`) | Spektrix API (schedule) + rendered page (availability) | Per-date list; availability read from the booking page |
 | **National Theatre** (`nationaltheatre.org.uk`) | Official events JSON API | Per-date booking status + price |
 
 New theatres are added by dropping one small adapter into `bot/adapters/` — see
@@ -57,20 +57,22 @@ the title, then only alerts on **new** availability from then on.
 
 ## Availability detection — what's reliable, and tuning
 
-National Theatre and Royal Court read from official JSON APIs, so their
-per-date **booking status and prices are exact** and need no browser. Almeida
-has no such API — its calendar is JavaScript-rendered, so that adapter renders
-the page and classifies each date from its visible booking text. The
-availability vocabulary ("Sold Out", "Book now", price markers, …) used for
-that case is centralised in
-[`bot/adapters/availability.py`](bot/adapters/availability.py) so it's easy to
-adjust in one place.
+**National Theatre** and **Almeida** report *real, seat-level* availability
+with no browser: NT overlays the Tessitura (TNEW) booking page's per-performance
+"(Sold out)" state onto the events-API schedule, and Almeida reads its calendar
+admin-ajax endpoint whose per-date CSS state (`--sold-out` vs bookable) is the
+truth. Prices come through where the source exposes them.
 
-Note on **Royal Court**: its Spektrix public API gives the authoritative date
-list and an `isOnSale` flag, but does not expose per-seat counts, so "available"
-there currently means "open for public sale". For a show that stays on sale but
-sold out, catching returns needs the rendered booking widget — a documented
-next step (see `scripts/probe.py`).
+**Royal Court** is different: Spektrix's public API gives the schedule but no
+seat-level availability (its `isOnSale` flag stays true even when sold out), and
+the booking calendar is JavaScript-rendered behind bot protection. So that
+adapter takes the schedule from Spektrix and reads availability by rendering the
+production page in a headless browser, classifying each date from its visible
+booking text. It is deliberately conservative — a date is only marked available
+on a clear "bookable"/price signal, so a blocked or failed render never produces
+false alerts. The wording it looks for ("Sold Out", "Book now", price markers, …)
+is centralised in [`bot/adapters/availability.py`](bot/adapters/availability.py).
+Verify/tune it on the host with `python -m scripts.probe render "<royal court url>" out.html`.
 
 Use the probe helper (from a machine with direct internet) to see exactly what
 an adapter extracts, or to dump a rendered page for inspection:

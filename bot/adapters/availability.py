@@ -14,6 +14,7 @@ theatre uses different wording.
 from __future__ import annotations
 
 import re
+from datetime import datetime
 
 from ..models import Performance
 from .util import price_range
@@ -75,8 +76,7 @@ def annotate(performances: list[Performance], visible_text: str) -> list[Perform
     low = flat.lower()
     out: list[Performance] = []
     for p in performances:
-        needles = _date_needles(p)
-        pos = next((low.find(n) for n in needles if low.find(n) != -1), -1)
+        pos = _locate(low, _date_needles(p))
         if pos == -1:
             out.append(p)
             continue
@@ -94,14 +94,28 @@ def annotate(performances: list[Performance], visible_text: str) -> list[Perform
     return out
 
 
+def _locate(low_text: str, needles: list[str]) -> int:
+    """First position of any needle, requiring a non-digit boundary before a
+    leading day number so "5 sep" doesn't match inside "15 sep"."""
+    for n in needles:
+        m = re.search(r"(?<!\d)" + re.escape(n), low_text)
+        if m:
+            return m.start()
+    return -1
+
+
 def _date_needles(p: Performance) -> list[str]:
-    """Lower-cased date fragments to search for, most specific first."""
-    needles = []
-    iso = p.date_iso[:10]
-    if iso:
-        needles.append(iso)
-    # "11 sep 2026" style, taken from the display date if present.
+    """Lower-cased, year-qualified date fragments, most specific first."""
+    needles: list[str] = []
+    try:
+        dt = datetime.fromisoformat(p.date_iso)
+    except ValueError:
+        dt = None
+    if dt:
+        needles.append(dt.strftime("%Y-%m-%d"))
+        needles.append(f"{dt.day} {dt.strftime('%b').lower()} {dt.year}")
+        needles.append(f"{dt.day} {dt.strftime('%B').lower()} {dt.year}")
     m = re.search(r"(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})", p.display_date)
     if m:
         needles.append(f"{int(m.group(1))} {m.group(2).lower()} {m.group(3)}")
-    return needles
+    return list(dict.fromkeys(needles))

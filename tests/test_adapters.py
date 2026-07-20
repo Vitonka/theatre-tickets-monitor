@@ -3,6 +3,7 @@ import json
 import pathlib
 
 from bot.adapters.almeida import parse_calendar, slug_from_url
+from bot.adapters.availability import annotate, classify_window
 from bot.adapters.national_theatre import parse_event, parse_tnew_availability
 from bot.adapters.royal_court import parse_event_match, parse_instances
 from bot.adapters.util import format_display_date, price_range
@@ -102,3 +103,28 @@ def test_almeida_desire_available():
     result = parse_calendar(data["instances"], "desire-under-the-elms")
     assert "Desire" in result.title
     assert any(p.available for p in result.performances)
+
+
+# ----- availability overlay (used for Royal Court browser render) --------
+def test_classify_window():
+    assert classify_window("Sold Out")[0] is False
+    assert classify_window("Book now £45")[0] is True
+    assert classify_window("just some text")[0] is None
+    assert classify_window("Limited availability sold out elsewhere £30")[0] is True
+
+
+def test_annotate_overlays_availability_and_respects_day_boundary():
+    from bot.models import Performance
+    perfs = [
+        Performance("2026-09-05T19:30:00", "Sat 5 Sep 2026, 7:30pm", False),
+        Performance("2026-09-15T19:30:00", "Tue 15 Sep 2026, 7:30pm", False),
+    ]
+    # "5 September" is sold out; "15 September" is bookable. The 5th must not
+    # accidentally match inside "15 september".
+    text = ("Performances: 15 September 2026 Book now £30 . "
+            "5 September 2026 Sold Out .")
+    out = annotate(perfs, text)
+    by = {p.date_iso[:10]: p for p in out}
+    assert by["2026-09-05"].available is False
+    assert by["2026-09-15"].available is True
+    assert by["2026-09-15"].price_text == "£30"

@@ -1,22 +1,30 @@
-"""Royal Court Theatre — backed by the Spektrix ticketing platform.
+"""Royal Court Theatre — Spektrix schedule + browser-read availability.
 
-The public site (royalcourttheatre.com) sits behind Cloudflare and its booking
-calendar is JS-rendered, but the underlying Spektrix system exposes a public
-read-only JSON API that needs no browser:
+The public Spektrix API gives the authoritative performance list, but its
+``isOnSale`` flag only means "open for sale", not that seats remain — a
+sold-out-but-listed show still reports ``isOnSale: true``. Spektrix exposes no
+public seat-availability endpoint, and the royalcourttheatre.com booking
+calendar is JavaScript-rendered behind bot protection.
 
-    https://system.spektrix.com/royalcourt/api/v3/events
-    https://system.spektrix.com/royalcourt/api/v3/events/{id}/instances
+So we take the schedule from Spektrix and read *real* availability by rendering
+the production page in a headless browser and classifying the visible booking
+text per date (see ``availability.annotate``). This is defensive: a date is
+only marked available on a clear "bookable"/price signal, so a failed or
+blocked render yields no false alerts (everything stays unavailable).
 
-We match the production by its URL slug against the event list, then read the
-per-performance instances. ``isOnSale`` is Spektrix's public "this performance
-is open for sale" flag — see the module note on its limits.
+Note: the render path can't be exercised in every environment; use
+``scripts/probe.py render <url>`` on the host to confirm/tune wording in
+``availability.py`` if Royal Court alerts look off.
 """
 from __future__ import annotations
 
 import re
 
+from bs4 import BeautifulSoup
+
 from ..browser import fetch_json
 from ..models import FetchResult, Performance
+from .availability import annotate
 from .base import TheatreAdapter, host
 from .util import format_display_date, price_range
 
@@ -37,7 +45,6 @@ def parse_event_match(events: list[dict], url: str) -> dict | None:
     for ev in events:
         if _slug(ev.get("name", "")) == target:
             return ev
-    # Looser fallback: slug is a prefix/substring of the event name slug.
     for ev in events:
         if target in _slug(ev.get("name", "")):
             return ev
@@ -45,6 +52,8 @@ def parse_event_match(events: list[dict], url: str) -> dict | None:
 
 
 def parse_instances(event_name: str, instances: list[dict]) -> FetchResult:
+    """Schedule from Spektrix. Availability defaults to False here; the real
+    value is overlaid from the rendered booking page in ``fetch``."""
     perfs: list[Performance] = []
     for inst in instances:
         if inst.get("cancelled"):
@@ -58,7 +67,7 @@ def parse_instances(event_name: str, instances: list[dict]) -> FetchResult:
             Performance(
                 date_iso=start,
                 display_date=format_display_date(start),
-                available=bool(inst.get("isOnSale")),
+                available=False,
                 price_text=price,
             )
         )
@@ -87,4 +96,14 @@ class RoyalCourtAdapter(TheatreAdapter):
         )
         if not isinstance(instances, list):
             raise ValueError("Unexpected Spektrix instances response")
-        return parse_instances(event.get("name", "Royal Court production"), instances)
+        base = parse_instances(event.get("name", "Royal Court production"), instances)
+
+        # Overlay real availability from the rendered production page. On any
+        # failure we keep the safe default (unavailable) rather than guess.
+        try:
+            html = await browser.render_html(url, settle_ms=5000)
+            text = BeautifulSoup(html, "html.parser").get_text(" ")
+            performances = annotate(base.performances, text)
+        except Exception:
+            performances = base.performances
+        return FetchResult(title=base.title, performances=performances)

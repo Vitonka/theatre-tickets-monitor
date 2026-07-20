@@ -1,0 +1,14 @@
+services:
+  theatre-monitor:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Override defaults here if you like:
+      POLL_INTERVAL_MIN: "15"
+      DB_PATH: "/data/monitors.db"
+    volumes:
+      - monitor-data:/data
+
+volumes:
+  monitor-data:

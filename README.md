@@ -10,7 +10,7 @@ Supported theatres out of the box:
 | --- | --- | --- |
 | **Almeida** (`almeida.co.uk`) | Rendered calendar page | Per-date sold-out / price |
 | **Royal Court** (`royalcourttheatre.com`) | Spektrix public JSON API | Per-date list + on-sale state |
-| **National Theatre** (`nationaltheatre.org.uk`) | schema.org data + rendered booking widget | Per-date list + availability text |
+| **National Theatre** (`nationaltheatre.org.uk`) | Official events JSON API | Per-date booking status + price |
 
 New theatres are added by dropping one small adapter into `bot/adapters/` — see
 [Adding a theatre](#adding-a-theatre).
@@ -57,11 +57,12 @@ the title, then only alerts on **new** availability from then on.
 
 ## Availability detection — what's reliable, and tuning
 
-Getting the *list of performance dates* is reliable for all three theatres
-(structured data / official API). Detecting **per-date seat availability** is
-done from each site's live booking interface, which is JavaScript-rendered and
-occasionally changes its wording. The availability vocabulary ("Sold Out",
-"Book now", price markers, …) is centralised in
+National Theatre and Royal Court read from official JSON APIs, so their
+per-date **booking status and prices are exact** and need no browser. Almeida
+has no such API — its calendar is JavaScript-rendered, so that adapter renders
+the page and classifies each date from its visible booking text. The
+availability vocabulary ("Sold Out", "Book now", price markers, …) used for
+that case is centralised in
 [`bot/adapters/availability.py`](bot/adapters/availability.py) so it's easy to
 adjust in one place.
 

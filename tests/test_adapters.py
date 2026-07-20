@@ -6,7 +6,7 @@ import pytest
 
 from bot.adapters.almeida import parse_calendar, parse_production, calendar_url
 from bot.adapters.availability import annotate, classify_window
-from bot.adapters.national_theatre import parse_dates
+from bot.adapters.national_theatre import parse_event
 from bot.adapters.royal_court import parse_event_match, parse_instances
 from bot.adapters.util import format_display_date, price_range
 from bot.models import Performance
@@ -74,15 +74,29 @@ def test_royalcourt_no_match_returns_none():
     assert parse_event_match(events, "https://royalcourttheatre.com/events/nope-xyz/") is None
 
 
-# ----- National Theatre ---------------------------------------------------
-def test_national_theatre_dates_from_ldjson():
-    result = parse_dates(read("national_theatre_electra.html"))
+# ----- National Theatre (JSON API) ---------------------------------------
+def test_national_theatre_warhorse_all_available():
+    event = json.loads(read("national_theatre_warhorse_api.json"))
+    result = parse_event(event)
+    assert result.title == "War Horse"
+    assert len(result.performances) == 14
+    # every War Horse performance is on sale ("auto")
+    assert all(p.available for p in result.performances)
+    p0 = result.performances[0]
+    assert p0.price_text.startswith("£") and "–" in p0.price_text  # a range
+    assert p0.book_url.startswith("https://tickets.nationaltheatre.org.uk/")
+    # UTC 18:30Z shown in London local (BST, 7:30pm)
+    assert "7:30pm" in p0.display_date
+
+
+def test_national_theatre_status_marks_nonbookable_unavailable():
+    event = json.loads(read("national_theatre_electra_api.json"))
+    result = parse_event(event)
     assert "Electra" in result.title
-    assert len(result.performances) >= 20
-    # all default to not-available (positive signal only from booking widget)
-    assert all(p.available is False for p in result.performances)
-    # a price range was picked up from the page copy
-    assert result.performances[0].price_text.startswith("£")
+    assert len(result.performances) == 57
+    # exactly the one "nonbookable" instance is unavailable
+    assert sum(1 for p in result.performances if not p.available) == 1
+    assert sum(1 for p in result.performances if p.available) == 56
 
 
 # ----- Almeida ------------------------------------------------------------

@@ -3,9 +3,12 @@ import json
 import pathlib
 
 from bot.adapters.almeida import parse_calendar, slug_from_url
-from bot.adapters.availability import annotate, classify_window
 from bot.adapters.national_theatre import parse_event, parse_tnew_availability
-from bot.adapters.royal_court import parse_event_match, parse_instances
+from bot.adapters.royal_court import (
+    parse_event_match,
+    parse_instances,
+    parse_rendered_availability,
+)
 from bot.adapters.util import format_display_date, price_range
 
 FIX = pathlib.Path(__file__).parent / "fixtures"
@@ -105,26 +108,32 @@ def test_almeida_desire_available():
     assert any(p.available for p in result.performances)
 
 
-# ----- availability overlay (used for Royal Court browser render) --------
-def test_classify_window():
-    assert classify_window("Sold Out")[0] is False
-    assert classify_window("Book now £45")[0] is True
-    assert classify_window("just some text")[0] is None
-    assert classify_window("Limited availability sold out elsewhere £30")[0] is True
+# ----- Royal Court rendered availability (real DOM) ----------------------
+def test_royalcourt_rendered_all_bookable():
+    avail = parse_rendered_availability(read("royalcourt_blood_rendered.html"))
+    assert len(avail) == 42            # Blood of my Blood: 42 performances
+    assert all(avail.values())         # all show a "Book now" action
 
 
-def test_annotate_overlays_availability_and_respects_day_boundary():
-    from bot.models import Performance
-    perfs = [
-        Performance("2026-09-05T19:30:00", "Sat 5 Sep 2026, 7:30pm", False),
-        Performance("2026-09-15T19:30:00", "Tue 15 Sep 2026, 7:30pm", False),
-    ]
-    # "5 September" is sold out; "15 September" is bookable. The 5th must not
-    # accidentally match inside "15 september".
-    text = ("Performances: 15 September 2026 Book now £30 . "
-            "5 September 2026 Sold Out .")
-    out = annotate(perfs, text)
-    by = {p.date_iso[:10]: p for p in out}
-    assert by["2026-09-05"].available is False
-    assert by["2026-09-15"].available is True
-    assert by["2026-09-15"].price_text == "£30"
+def test_royalcourt_rendered_marks_soldout_unavailable():
+    # A "Book now" instance is available; a "Sold out" / "Join the waiting
+    # list" instance (still linking to /book/instance) is not.
+    html = (
+        '<li class="c-instance o-list__item"><time>Thu 1 Oct 7:45pm</time>'
+        '<a href="/book/instance/111"><span class="o-button__text"><span>Book now</span></span></a></li>'
+        '<li class="c-instance o-list__item"><time>Fri 2 Oct 7:45pm</time>'
+        '<a href="/book/instance/222"><span class="o-button__text"><span>Join the waiting list</span></span></a></li>'
+    )
+    avail = parse_rendered_availability(html)
+    assert avail == {"111": True, "222": False}
+
+
+def test_royalcourt_join_availability_by_instance_id():
+    instances = load("royalcourt_man_to_man_instances.json")
+    # pretend the render said the first instance is bookable
+    first_id = instances[0]["id"]
+    import re as _re
+    numeric = _re.match(r"\d+", first_id).group(0)
+    result = parse_instances("Man to Man", instances, {numeric: True})
+    avail = [p for p in result.performances if p.available]
+    assert len(avail) == 1

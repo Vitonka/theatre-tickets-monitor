@@ -57,22 +57,26 @@ the title, then only alerts on **new** availability from then on.
 
 ## Availability detection — what's reliable, and tuning
 
-**National Theatre** and **Almeida** report *real, seat-level* availability
-with no browser: NT overlays the Tessitura (TNEW) booking page's per-performance
-"(Sold out)" state onto the events-API schedule, and Almeida reads its calendar
-admin-ajax endpoint whose per-date CSS state (`--sold-out` vs bookable) is the
-truth. Prices come through where the source exposes them.
+Each adapter reads the *real* per-date availability the box office shows, and
+alerts list only the dates that have tickets (no prices).
 
-**Royal Court** is different: Spektrix's public API gives the schedule but no
-seat-level availability (its `isOnSale` flag stays true even when sold out), and
-the booking calendar is JavaScript-rendered behind bot protection. So that
-adapter takes the schedule from Spektrix and reads availability by rendering the
-production page in a headless browser, classifying each date from its visible
-booking text. It is deliberately conservative — a date is only marked available
-on a clear "bookable"/price signal, so a blocked or failed render never produces
-false alerts. The wording it looks for ("Sold Out", "Book now", price markers, …)
-is centralised in [`bot/adapters/availability.py`](bot/adapters/availability.py).
-Verify/tune it on the host with `python -m scripts.probe render "<royal court url>" out.html`.
+- **Almeida** — reads its calendar `admin-ajax` endpoint; each date's CSS state
+  (`--sold-out` vs a book button) is the truth. No browser.
+- **National Theatre** — takes the schedule + performance ids from the events
+  API, then reads the Tessitura (TNEW) booking page's performance list, where
+  each option is `Date (Sold out)?`. That page sits behind a **queue-it**
+  waiting room, so the adapter fetches it over plain HTTP first and falls back
+  to the headless browser (which passes the waiting room) when needed.
+- **Royal Court** — takes the schedule from Spektrix (whose public API can't
+  report seat availability — `isOnSale` stays true when sold out) and reads
+  availability from the production page, rendered in a headless browser: each
+  `<li class="c-instance">` with a "Book now" action is available. Rendered
+  performances are joined to the Spektrix schedule by instance id.
+
+All availability checks are conservative — a date is only reported available on
+a positive "bookable" signal, so a blocked or failed render/fetch yields no
+availability rather than a false alert. If a site changes its markup, dump the
+page it serves with the probe and adjust the matching adapter:
 
 Use the probe helper (from a machine with direct internet) to see exactly what
 an adapter extracts, or to dump a rendered page for inspection:

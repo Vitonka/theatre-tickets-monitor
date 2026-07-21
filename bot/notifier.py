@@ -16,8 +16,7 @@ def format_alert(monitor: Monitor, performances: list[Performance]) -> str:
         f"({escape(monitor.theatre)})"
     ]
     for p in performances[:MAX_LINES]:
-        price = f" — {escape(p.price_text)}" if p.price_text else ""
-        lines.append(f"• {escape(p.display_date)}{price}")
+        lines.append(f"• {escape(p.display_date)}")
     if len(performances) > MAX_LINES:
         lines.append(f"…and {len(performances) - MAX_LINES} more")
     lines.append(f'\n<a href="{escape(monitor.url, quote=True)}">Book / view</a>')

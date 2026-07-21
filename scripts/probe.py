@@ -39,13 +39,12 @@ async def cmd_fetch(url: str) -> None:
         result = await adapter.fetch(url, browser)
     finally:
         await browser.close()
+    avail = result.available
     print(f"Adapter : {adapter.name}")
     print(f"Title   : {result.title}")
-    print(f"Perfs   : {len(result.performances)} "
-          f"({len(result.available)} available)")
-    for p in result.performances[:40]:
-        flag = "✅" if p.available else "  "
-        print(f"  {flag} {p.display_date:<28} {p.price_text}")
+    print(f"Perfs   : {len(result.performances)} total, {len(avail)} with tickets")
+    for p in avail[:80]:
+        print(f"  ✅ {p.display_date}")
 
 
 async def cmd_render(url: str, out: str = "rendered.html") -> None:

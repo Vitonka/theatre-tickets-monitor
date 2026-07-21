@@ -131,12 +131,20 @@ class NationalTheatreAdapter(TheatreAdapter):
         event = await fetch_json(f"{API}/events/{event_id}")
         if not isinstance(event, dict) or "instances" not in event:
             raise ValueError("Unexpected National Theatre API response")
-        # Real availability from the TNEW booking page (best-effort: if it can't
-        # be read we fall back to "no availability" rather than false alerts).
+        # Real availability from the TNEW booking page. Fast path is a plain
+        # HTTP fetch; if that returns no options (National Theatre gates TNEW
+        # behind a queue-it waiting room that scripted requests can't pass) we
+        # retry with the headless browser, which does pass it. If both fail we
+        # keep "no availability" rather than emit false alerts.
         availability: dict[str, bool] = {}
         try:
-            tnew_html = await fetch_html(f"{TNEW}/{event_id}")
-            availability = parse_tnew_availability(tnew_html)
+            availability = parse_tnew_availability(await fetch_html(f"{TNEW}/{event_id}"))
         except Exception:
             pass
+        if not availability:
+            try:
+                html = await browser.render_html(f"{TNEW}/{event_id}", settle_ms=6000)
+                availability = parse_tnew_availability(html)
+            except Exception:
+                pass
         return parse_event(event, availability)

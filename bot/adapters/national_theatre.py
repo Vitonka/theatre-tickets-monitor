@@ -16,6 +16,7 @@ passes it) for any performance that comes back ambiguous.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -23,6 +24,8 @@ from zoneinfo import ZoneInfo
 from ..browser import fetch_html, fetch_json
 from ..models import FetchResult, Performance
 from .base import TheatreAdapter, host
+
+log = logging.getLogger(__name__)
 
 API = "https://events.nationaltheatre.org.uk/api/v1"
 TNEW = "https://tickets.nationaltheatre.org.uk"
@@ -118,16 +121,27 @@ class NationalTheatreAdapter(TheatreAdapter):
             perf_available_from_page(h) if isinstance(h, str) else None for h in htmls
         ]
 
+        http_unknown = sum(1 for r in avail if r is None)
+        log.info(
+            "NT %s: %d performances; HTTP resolved %d, %d need browser "
+            "(queue-it). If this is high, the plain fetch is being queued.",
+            title, len(instances), len(instances) - http_unknown, http_unknown,
+        )
+
         # Phase 2: browser fallback (passes queue-it) for anything still unknown,
-        # done sequentially to bound memory on small hosts.
+        # done sequentially to bound memory on small hosts. Use network-idle so
+        # the queue-it redirect chain completes before we read the seat page.
         for idx, res in enumerate(avail):
             if res is not None:
                 continue
             try:
-                html = await browser.render_html(seat_urls[idx], settle_ms=5000)
+                html = await browser.render_html(
+                    seat_urls[idx], wait_until="networkidle", settle_ms=3000
+                )
                 avail[idx] = perf_available_from_page(html)
-            except Exception:
-                pass
+                log.info("NT browser fallback %s -> %s", seat_urls[idx][-12:], avail[idx])
+            except Exception as exc:
+                log.warning("NT browser fallback failed %s: %s", seat_urls[idx][-12:], exc)
 
         perfs: list[Performance] = []
         for inst, res in zip(instances, avail):

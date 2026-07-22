@@ -22,12 +22,15 @@ availability rather than a false alert.
 """
 from __future__ import annotations
 
+import logging
 import re
 
 from ..browser import fetch_json
 from ..models import FetchResult, Performance
 from .base import TheatreAdapter, host
 from .util import format_display_date
+
+log = logging.getLogger(__name__)
 
 SYSTEM = "royalcourt"
 API = f"https://system.spektrix.com/{SYSTEM}/api/v3"
@@ -133,17 +136,29 @@ class RoyalCourtAdapter(TheatreAdapter):
 
         # Real availability from the rendered production page. The page first
         # renders every performance as "Book now", then JavaScript swaps
-        # sold-out ones to a disabled "Sold out" button — so we must wait for
-        # the network to go idle before reading, or we'd see false positives.
-        # On any failure we keep the safe default (unavailable) rather than guess.
+        # sold-out ones to a disabled "Sold out" span. We wait for the first
+        # such swapped button to appear (bounded, not networkidle which can
+        # hang) so we never read the premature all-"Book now" state. A fully
+        # available show has no disabled buttons; the wait times out harmlessly
+        # and we read it as-is. On any failure we keep the safe default.
         availability: dict[str, bool] = {}
         try:
             html = await browser.render_html(
-                url, wait_until="networkidle", settle_ms=4000
+                url,
+                wait_selector="span.o-button--disabled",
+                wait_timeout_ms=25000,
+                settle_ms=3000,
             )
             availability = parse_rendered_availability(html)
-        except Exception:
-            pass
+            log.info(
+                "RC render: %d instances with book links, %d buyable "
+                "(disabled 'Sold out' spans on page: %d)",
+                len(availability),
+                sum(availability.values()),
+                html.count("o-button--disabled"),
+            )
+        except Exception as exc:
+            log.warning("RC render failed for %s: %s", url, exc)
         return parse_instances(
             event.get("name", "Royal Court production"), instances, availability
         )

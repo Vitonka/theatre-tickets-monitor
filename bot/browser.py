@@ -65,11 +65,15 @@ class BrowserManager:
         wait_selector: str | None = None,
         settle_ms: int = 3500,
         wait_until: str = "domcontentloaded",
+        wait_timeout_ms: int | None = None,
     ) -> str:
         """Return the fully-rendered DOM after JS has run.
 
-        ``wait_selector`` (when given) is waited for before snapshotting; we
-        always add a short settle delay for late XHR-driven content.
+        ``wait_selector`` (when given) is waited for before snapshotting, up to
+        ``wait_timeout_ms`` (defaults to the page timeout); missing it is not an
+        error — we fall through and still snapshot. A short settle delay follows
+        for late XHR-driven content. ``wait_until`` is the goto load state; we
+        avoid "networkidle" for pages that keep a connection open (it can hang).
         """
         browser = await self._ensure_browser()
         context = await browser.new_context(
@@ -87,7 +91,8 @@ class BrowserManager:
             if wait_selector:
                 try:
                     await page.wait_for_selector(
-                        wait_selector, timeout=self._config.page_timeout_ms
+                        wait_selector,
+                        timeout=wait_timeout_ms or self._config.page_timeout_ms,
                     )
                 except Exception:
                     # Fall through: the caller's parser decides if content is

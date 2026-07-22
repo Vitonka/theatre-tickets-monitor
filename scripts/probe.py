@@ -65,6 +65,15 @@ def main() -> None:
     cmd, url = sys.argv[1], sys.argv[2]
     if cmd == "fetch":
         asyncio.run(cmd_fetch(url))
+    elif cmd == "diag":
+        # Same as fetch but with the adapters' diagnostic logging turned on so
+        # you can see what each fetch actually did in *your* environment.
+        import logging
+
+        logging.basicConfig(
+            level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+        )
+        asyncio.run(cmd_fetch(url))
     elif cmd == "render":
         out = sys.argv[3] if len(sys.argv) > 3 else "rendered.html"
         asyncio.run(cmd_render(url, out))

@@ -75,16 +75,27 @@ def test_royalcourt_event_match():
     assert parse_event_match(events, "https://royalcourttheatre.com/events/nope/") is None
 
 
-def test_royalcourt_blood_all_buyable():
-    avail = parse_rendered_availability(read("royalcourt_blood_rendered.html"))
-    assert len(avail) == 42 and all(avail.values())
-
-
-def test_royalcourt_mantoman_excludes_access_only():
-    avail = parse_rendered_availability(read("royalcourt_mantoman_rendered.html"))
-    assert len(avail) == 55
-    assert sum(avail.values()) == 35            # 20 "Sold out *" excluded
+def test_royalcourt_mantoman_loaded_page():
+    # Real, fully-loaded capture: only performances with a plain "Book now"
+    # link are buyable. Sold-out performances render a disabled span (no book
+    # link, absent from the map) and Access-only ones link with requireLogin.
+    avail = parse_rendered_availability(read("royalcourt_mantoman_loaded.html"))
+    assert sum(avail.values()) == 1             # matches the live site
+    assert avail["346571"] is True              # the one buyable performance
     assert avail["345967"] is False             # Thu 17 Sep 2:30pm = Access-only
+
+
+def test_royalcourt_premature_all_book_now_is_not_trusted():
+    # If the page were read before its JS swapped sold-out buttons, every
+    # performance would show "Book now". parse_rendered_availability reports
+    # those as buyable, which is exactly why the adapter waits for network-idle
+    # before reading — documented here so the assumption stays visible.
+    premature = (
+        '<li class="c-instance o-list__item"><time>Sat 5 Sep 6:30pm</time>'
+        '<div class="c-instance__action"><a href="/book/instance/999">'
+        '<span class="o-button__text"><span>Book now</span></span></a></div></li>'
+    )
+    assert parse_rendered_availability(premature) == {"999": True}
 
 
 def test_royalcourt_join_availability_by_instance_id():

@@ -60,7 +60,11 @@ class BrowserManager:
             return self._browser
 
     async def render_html(
-        self, url: str, wait_selector: str | None = None, settle_ms: int = 3500
+        self,
+        url: str,
+        wait_selector: str | None = None,
+        settle_ms: int = 3500,
+        wait_until: str = "domcontentloaded",
     ) -> str:
         """Return the fully-rendered DOM after JS has run.
 
@@ -77,7 +81,7 @@ class BrowserManager:
         try:
             await page.goto(
                 url,
-                wait_until="domcontentloaded",
+                wait_until=wait_until,
                 timeout=self._config.page_timeout_ms,
             )
             if wait_selector:

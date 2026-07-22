@@ -7,12 +7,18 @@ availability is on the royalcourttheatre.com production page, which is
 JavaScript-rendered behind bot protection.
 
 So we render that page in a headless browser and read its dates-times list.
-Each performance is a ``<li class="c-instance">`` with a ``<time>`` and, when
-bookable, a "Book now" action linking to ``/book/instance/{id}``. That numeric
-id equals the leading digits of the Spektrix instance id, so we join the two:
-Spektrix supplies the exact date (with year); the rendered page supplies real
-availability. A performance is available only when it has a book action, so a
-blocked/failed render simply yields no availability (never a false alert).
+Each performance is a ``<li class="c-instance">`` with a ``<time>`` and one of:
+  * "Book now" linking to ``/book/instance/{id}``            -> buyable
+  * "Sold out *" linking to ``…&requireLogin=true``           -> Access-only
+  * a disabled ``Sold out`` span with no link                 -> sold out
+The buyable ``/book/instance/{id}`` numeric id equals the leading digits of the
+Spektrix instance id, so we join the two: Spektrix supplies the exact date (with
+year); the rendered page supplies real availability.
+
+Crucially the page renders every performance as "Book now" first, then swaps
+sold-out ones client-side, so the render must wait for network-idle before
+reading — otherwise everything looks buyable. A blocked/failed render yields no
+availability rather than a false alert.
 """
 from __future__ import annotations
 
@@ -125,11 +131,16 @@ class RoyalCourtAdapter(TheatreAdapter):
         if not isinstance(instances, list):
             raise ValueError("Unexpected Spektrix instances response")
 
-        # Real availability from the rendered production page. On any failure we
-        # keep the safe default (unavailable) rather than guess.
+        # Real availability from the rendered production page. The page first
+        # renders every performance as "Book now", then JavaScript swaps
+        # sold-out ones to a disabled "Sold out" button — so we must wait for
+        # the network to go idle before reading, or we'd see false positives.
+        # On any failure we keep the safe default (unavailable) rather than guess.
         availability: dict[str, bool] = {}
         try:
-            html = await browser.render_html(url, settle_ms=5000)
+            html = await browser.render_html(
+                url, wait_until="networkidle", settle_ms=4000
+            )
             availability = parse_rendered_availability(html)
         except Exception:
             pass

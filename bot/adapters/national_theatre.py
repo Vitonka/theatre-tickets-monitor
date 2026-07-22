@@ -1,24 +1,21 @@
 """National Theatre — nationaltheatre.org.uk.
 
-Two data sources are combined:
+Real per-performance availability lives only in the Tessitura (TNEW) seat page:
+neither the events API (every instance is ``bookingStatus:"auto"``) nor the
+production page nor the TNEW performance list distinguishes an on-sale-but-sold-
+out performance. But the individual seat page does, unambiguously:
 
-* The public events API gives the authoritative schedule and prices:
-      https://events.nationaltheatre.org.uk/api/v1/events/{productionId}
-  Each instance has a ``datetime`` (UTC), ``bookingURL`` and ``prices`` — but
-  its ``bookingStatus`` ("auto") only means "on public sale", NOT that seats
-  are actually available (a sold-out show still reports "auto").
+    available  -> contains "Best available"        (seat map is offered)
+    sold out   -> contains "Not currently available"
 
-* The real, seat-level availability the customer sees comes from the Tessitura
-  (TNEW) booking page, whose performance <select> lists every performance as
-      <option value=".../{productionId}/{performanceId}">Date (Sold out)?</option>
-  The "(Sold out)" suffix is the ground truth. We fetch it once per show and
-  overlay it onto the schedule, matched by performance id.
-
-The numeric production id comes from the production page's booking links, or a
-slug match against the API's on-sale listing when the page exposes none.
+So we take the schedule from the events API and check each performance's seat
+page. TNEW sits behind a queue-it waiting room; a plain HTTP fetch passes it in
+most environments, and we fall back to the headless browser (which always
+passes it) for any performance that comes back ambiguous.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -26,16 +23,11 @@ from zoneinfo import ZoneInfo
 from ..browser import fetch_html, fetch_json
 from ..models import FetchResult, Performance
 from .base import TheatreAdapter, host
-from .util import format_display_date, price_range
 
 API = "https://events.nationaltheatre.org.uk/api/v1"
 TNEW = "https://tickets.nationaltheatre.org.uk"
 LONDON = ZoneInfo("Europe/London")
 _BOOKING_ID_RE = re.compile(r"tickets\.nationaltheatre\.org\.uk/(\d+)/\d+")
-_TNEW_OPTION_RE = re.compile(
-    r'<option value="https://tickets\.nationaltheatre\.org\.uk/\d+/(\d+)"[^>]*>'
-    r"([^<]*)</option>"
-)
 
 
 def _slug(text: str) -> str:
@@ -54,51 +46,26 @@ def _local(iso_utc: str) -> tuple[str, str]:
     except ValueError:
         return iso_utc, iso_utc
     local_iso = dt.strftime("%Y-%m-%dT%H:%M:%S")
-    return local_iso, format_display_date(local_iso)
+    hour = dt.hour % 12 or 12
+    minute = f":{dt.minute:02d}" if dt.minute else ""
+    ampm = "am" if dt.hour < 12 else "pm"
+    return local_iso, f"{dt:%a} {dt.day} {dt:%b %Y}, {hour}{minute}{ampm}"
 
 
-def _instance_price(instance: dict, mode_of_sale: str) -> str:
-    prices = instance.get("prices") or []
-    tier = [p for p in prices if str(p.get("mos")) == mode_of_sale] or prices
-    return price_range(" ".join(f"£{p['price']}" for p in tier if p.get("price")))
-
-
-def parse_tnew_availability(html: str) -> dict[str, bool]:
-    """Map performance id -> is_available from the TNEW performance <select>."""
-    out: dict[str, bool] = {}
-    for perf_id, label in _TNEW_OPTION_RE.findall(html):
-        out[perf_id] = "sold out" not in label.lower()
-    return out
-
-
-def parse_event(event: dict, availability: dict[str, bool]) -> FetchResult:
-    """Combine the API schedule with real TNEW availability."""
-    title = event.get("title") or "National Theatre production"
-    mode_of_sale = str(event.get("modeOfSale", ""))
-    perfs: list[Performance] = []
-    for inst in event.get("instances", []):
-        local_iso, display = _local(inst.get("datetime", ""))
-        perf_id = _perf_id(inst.get("bookingURL", ""))
-        # Available only when the TNEW booking list says this performance is
-        # not sold out. Unknown id (not on sale there) => treat as unavailable.
-        available = availability.get(perf_id, False)
-        perfs.append(
-            Performance(
-                date_iso=local_iso,
-                display_date=display,
-                available=available,
-                price_text=_instance_price(inst, mode_of_sale),
-                book_url=inst.get("bookingURL") or "",
-            )
-        )
-    perfs.sort(key=lambda p: p.date_iso)
-    return FetchResult(title=title, performances=perfs)
+def perf_available_from_page(html: str) -> bool | None:
+    """True/False from a TNEW seat page; None when the signal is absent
+    (e.g. a queue-it holding page) so the caller can retry via the browser."""
+    low = html.lower()
+    if "not currently available" in low:
+        return False
+    if "best available" in low:
+        return True
+    return None
 
 
 async def _resolve_event_id(url: str) -> str | None:
     try:
-        html = await fetch_html(url)
-        m = _BOOKING_ID_RE.search(html)
+        m = _BOOKING_ID_RE.search(await fetch_html(url))
         if m:
             return m.group(1)
     except Exception:
@@ -113,6 +80,13 @@ async def _resolve_event_id(url: str) -> str | None:
             if _slug(ev.get("title", "")) == slug:
                 return str(ev.get("_id"))
     return None
+
+
+async def _http_html(u: str) -> str | None:
+    try:
+        return await fetch_html(u)
+    except Exception:
+        return None
 
 
 class NationalTheatreAdapter(TheatreAdapter):
@@ -131,20 +105,40 @@ class NationalTheatreAdapter(TheatreAdapter):
         event = await fetch_json(f"{API}/events/{event_id}")
         if not isinstance(event, dict) or "instances" not in event:
             raise ValueError("Unexpected National Theatre API response")
-        # Real availability from the TNEW booking page. Fast path is a plain
-        # HTTP fetch; if that returns no options (National Theatre gates TNEW
-        # behind a queue-it waiting room that scripted requests can't pass) we
-        # retry with the headless browser, which does pass it. If both fail we
-        # keep "no availability" rather than emit false alerts.
-        availability: dict[str, bool] = {}
-        try:
-            availability = parse_tnew_availability(await fetch_html(f"{TNEW}/{event_id}"))
-        except Exception:
-            pass
-        if not availability:
+        title = event.get("title") or "National Theatre production"
+        instances = event["instances"]
+        seat_urls = [
+            inst.get("bookingURL") or f"{TNEW}/{event_id}/{_perf_id(inst.get('bookingURL',''))}"
+            for inst in instances
+        ]
+
+        # Phase 1: fast concurrent HTTP checks.
+        htmls = await asyncio.gather(*[_http_html(u) for u in seat_urls])
+        avail: list[bool | None] = [
+            perf_available_from_page(h) if isinstance(h, str) else None for h in htmls
+        ]
+
+        # Phase 2: browser fallback (passes queue-it) for anything still unknown,
+        # done sequentially to bound memory on small hosts.
+        for idx, res in enumerate(avail):
+            if res is not None:
+                continue
             try:
-                html = await browser.render_html(f"{TNEW}/{event_id}", settle_ms=6000)
-                availability = parse_tnew_availability(html)
+                html = await browser.render_html(seat_urls[idx], settle_ms=5000)
+                avail[idx] = perf_available_from_page(html)
             except Exception:
                 pass
-        return parse_event(event, availability)
+
+        perfs: list[Performance] = []
+        for inst, res in zip(instances, avail):
+            local_iso, display = _local(inst.get("datetime", ""))
+            perfs.append(
+                Performance(
+                    date_iso=local_iso,
+                    display_date=display,
+                    available=bool(res),
+                    book_url=inst.get("bookingURL") or "",
+                )
+            )
+        perfs.sort(key=lambda p: p.date_iso)
+        return FetchResult(title=title, performances=perfs)

@@ -27,6 +27,7 @@ SYSTEM = "royalcourt"
 API = f"https://system.spektrix.com/{SYSTEM}/api/v3"
 
 _INSTANCE_BLOCK_RE = re.compile(r'<li class="c-instance[^"]*">.*?</li>', re.S)
+_ACTION_RE = re.compile(r'c-instance__action">(.*?)</div>', re.S)
 _BOOK_ID_RE = re.compile(r"/book/instance/(\d+)")
 _BTN_TEXT_RE = re.compile(r'o-button__text"><span>([^<]+)</span>')
 
@@ -56,20 +57,27 @@ def parse_event_match(events: list[dict], url: str) -> dict | None:
 
 
 def parse_rendered_availability(html: str) -> dict[str, bool]:
-    """Map instance id (numeric) -> bookable, from the rendered dates-times list.
+    """Map instance id (numeric) -> buyable-by-the-public, from the rendered
+    dates-times list.
 
-    Bookable = the instance shows a "Book"/"Buy" action. Sold-out performances
-    render a "Sold out" / "Join the waiting list" label instead, so they don't
-    match and stay unavailable.
+    On royalcourttheatre.com each performance renders a booking action:
+      * "Book now" with a plain /book/instance/{id} link  -> general seats on
+        sale = buyable.
+      * "Sold out *" with a /book/instance/{id}&requireLogin=true link -> only
+        Access-Members / returns remain = NOT buyable by the general public.
+    We report available only for the first case.
     """
     out: dict[str, bool] = {}
     for block in _INSTANCE_BLOCK_RE.findall(html):
         mid = _BOOK_ID_RE.search(block)
         if not mid:
             continue
-        btn = _BTN_TEXT_RE.search(block)
-        btn_text = btn.group(1).lower() if btn else ""
-        out[mid.group(1)] = "book" in btn_text or "buy" in btn_text
+        action = _ACTION_RE.search(block)
+        area = action.group(1) if action else block
+        btn = _BTN_TEXT_RE.search(area)
+        btn_text = btn.group(1).strip().lower() if btn else ""
+        require_login = "requirelogin=true" in area.lower()
+        out[mid.group(1)] = btn_text == "book now" and not require_login
     return out
 
 

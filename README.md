@@ -9,8 +9,8 @@ Supported theatres out of the box:
 | Theatre | Data source | Reliable signal |
 | --- | --- | --- |
 | **Almeida** (`almeida.co.uk`) | Calendar admin-ajax endpoint | Per-date sold-out (CSS state) |
-| **Royal Court** (`royalcourttheatre.com`) | Spektrix API (schedule) + rendered page (availability) | Per-date list; availability read from the booking page |
-| **National Theatre** (`nationaltheatre.org.uk`) | Official events JSON API | Per-date booking status + price |
+| **Royal Court** (`royalcourttheatre.com`) | Spektrix schedule + rendered page | Per-date buyable (excludes Access-only) |
+| **National Theatre** (`nationaltheatre.org.uk`) | Events API + per-performance TNEW seat page | Real per-performance availability |
 
 New theatres are added by dropping one small adapter into `bot/adapters/` — see
 [Adding a theatre](#adding-a-theatre).
@@ -57,34 +57,26 @@ the title, then only alerts on **new** availability from then on.
 
 ## Availability detection — what's reliable, and tuning
 
-Each adapter reads the *real* per-date availability the box office shows, and
-alerts list only the dates that have tickets (no prices).
+Each adapter reads the *real* per-performance availability the box office shows;
+alerts list only dates with buyable tickets (no prices).
 
 - **Almeida** — reads its calendar `admin-ajax` endpoint; each date's CSS state
   (`--sold-out` vs a book button) is the truth. No browser.
-- **National Theatre** — takes the schedule + performance ids from the events
-  API, then reads the Tessitura (TNEW) booking page's performance list, where
-  each option is `Date (Sold out)?`. That page sits behind a **queue-it**
-  waiting room, so the adapter fetches it over plain HTTP first and falls back
-  to the headless browser (which passes the waiting room) when needed.
-- **Royal Court** — takes the schedule from Spektrix (whose public API can't
-  report seat availability — `isOnSale` stays true when sold out) and reads
-  availability from the production page, rendered in a headless browser: each
-  `<li class="c-instance">` with a "Book now" action is available. Rendered
+- **National Theatre** — takes the schedule + performance ids from the events API,
+  then checks each performance's TNEW seat page, which is unambiguous:
+  `"Best available"` = bookable, `"Not currently available"` = sold out. TNEW is
+  behind a queue-it waiting room; a plain HTTP fetch passes it in most cases and
+  the adapter falls back to the headless browser for any performance that comes
+  back ambiguous. (This means one request per performance.)
+- **Royal Court** — takes the schedule from Spektrix and reads buyability from the
+  rendered production page: a `"Book now"` action with a plain `/book/instance/{id}`
+  link is buyable; `"Sold out *"` (an `…&requireLogin=true` link) means only
+  Access-Members / returns remain and is treated as not available. Rendered
   performances are joined to the Spektrix schedule by instance id.
 
-All availability checks are conservative — a date is only reported available on
-a positive "bookable" signal, so a blocked or failed render/fetch yields no
-availability rather than a false alert. If a site changes its markup, dump the
-page it serves with the probe and adjust the matching adapter:
-
-Use the probe helper (from a machine with direct internet) to see exactly what
-an adapter extracts, or to dump a rendered page for inspection:
-
-```bash
-python -m scripts.probe fetch  "https://almeida.co.uk/whats-on/golden-boy/"
-python -m scripts.probe render "https://almeida.co.uk/calendar/?e=golden-boy" out.html
-```
+All checks are conservative — only a positive "buyable" signal marks a date
+available, so a blocked/failed fetch yields no availability rather than a false
+alert. To inspect what a site serves, use `scripts/probe.py`.
 
 ## Development
 

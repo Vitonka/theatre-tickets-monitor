@@ -16,12 +16,14 @@ cost on every 15-minute poll.
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import httpx
-from playwright.async_api import Browser, async_playwright
 
 from .config import Config
+
+# Playwright is only needed by the browser-rendering adapters. It is imported
+# lazily inside ``_ensure_browser`` so the bot (and the HTTP-only adapters like
+# Almeida) run fine without Playwright installed.
 
 # A current, real desktop Chrome UA. Sites fingerprint obviously-bot UAs.
 USER_AGENT = (
@@ -41,14 +43,16 @@ class BrowserManager:
     def __init__(self, config: Config):
         self._config = config
         self._pw = None
-        self._browser: Optional[Browser] = None
+        self._browser = None
         self._lock = asyncio.Lock()
 
-    async def _ensure_browser(self) -> Browser:
+    async def _ensure_browser(self):
         async with self._lock:
             if self._browser and self._browser.is_connected():
                 return self._browser
             if self._pw is None:
+                from playwright.async_api import async_playwright
+
                 self._pw = await async_playwright().start()
             launch_kwargs: dict = {
                 "headless": self._config.headless,

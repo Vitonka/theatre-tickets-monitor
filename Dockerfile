@@ -1,6 +1,8 @@
-# Playwright's own image ships a matching Chromium + all system libraries,
-# so we never run `playwright install` and never hit browser/version drift.
-FROM mcr.microsoft.com/playwright/python:v1.47.0-jammy
+# Almeida-only build: no browser needed, so a slim Python image (tiny + low RAM).
+# To re-enable the browser adapters (National Theatre / Royal Court), switch the
+# base image back to mcr.microsoft.com/playwright/python:v1.47.0-jammy and add
+# `playwright==1.47.0` to requirements.txt.
+FROM python:3.11-slim
 
 WORKDIR /app
 

@@ -1,16 +1,19 @@
 # 🎭 Theatre Ticket Monitor
 
 A self-hosted Telegram bot that watches sold-out theatre productions and
-messages you — with **date and price** — when tickets appear (returns,
-released holds, extra performances).
+messages you — with the **performance dates** that have buyable tickets — when
+availability appears (returns, released holds, extra performances).
 
 Supported theatres out of the box:
 
 | Theatre | Data source | Reliable signal |
 | --- | --- | --- |
 | **Almeida** (`almeida.co.uk`) | Calendar admin-ajax endpoint | Per-date sold-out (CSS state) |
-| **Royal Court** (`royalcourttheatre.com`) | Spektrix schedule + rendered page | Per-date buyable (excludes Access-only) |
-| **National Theatre** (`nationaltheatre.org.uk`) | Events API + per-performance TNEW seat page | Real per-performance availability |
+
+> **Status:** Currently active for **Almeida** only — it uses a plain JSON
+> endpoint (no browser), so the bot is small and reliable. National Theatre
+> and Royal Court adapters exist in the repo but are disabled until each is
+> verified end-to-end (they need the headless browser).
 
 New theatres are added by dropping one small adapter into `bot/adapters/` — see
 [Adding a theatre](#adding-a-theatre).
